@@ -73,8 +73,8 @@ unittest
 // Fnum for fat num.
 struct Fnum
 {
-    enum esizemax = exponent.sizeof * 8;
-    enum fsizemax = fraction.sizeof * 8;
+    enum esizemax = exponent.sizeof * 8; // 16 bits
+    enum fsizemax = fraction.sizeof * 8; // 64 bits
     enum exponent_max = exponent.max;
     enum fraction_max = fraction.max;
 
@@ -533,6 +533,22 @@ nothrow @nogc @property
     }
 }
 
+int expoValue(U)(in U value) if (IsUnum!U) in {
+    assert(isFinite(value));
+} body {
+    with(value) {
+        immutable uint esizemaxminus1 = esizemax - 1;
+        immutable int bias = 2^^esizemaxminus1 - 1;
+        return exponent ? exponent - bias : exponent - bias + 1;
+    }
+}
+
+int expoValue(uint esizemax, ushort exponent) {
+    immutable uint esizemaxminus1 = esizemax - 1;
+    immutable int bias = 2^^esizemaxminus1 - 1;
+    return exponent ? exponent - bias : exponent - bias + 1;
+}
+
 string humanString(U)(in U value) if (IsUnum!U) {
     if(isNaN(value)) return value.sign ? "sNaN" : "qNaN";
     if(isInfinity(value)) return value.sign ? "-Inf" : "Inf";
@@ -541,13 +557,33 @@ string humanString(U)(in U value) if (IsUnum!U) {
         string b = value.next.humanString();
         return format("(%s, %s)", value.sign ? b : a, value.sign ? a : b);
     }
-    with(value) with(mpfr_rnd_t) {
-        enum precision = 128;
+    with(value) {
+        return floatString(sign, fraction, exponent, fsizemax, esizemax);
+    }
+}
 
-        immutable int hidden = exponent > 0 ? 1 : 0;
-        immutable uint esizemaxminus1 = esizemax - 1;
-        immutable long bias = 2L^^esizemaxminus1 - 1;
-        immutable long expo_value = exponent - bias + 1 - hidden;
+string humanString(in GBound value) {
+    if (value.nan) return "nan";
+    if (value.left is value.right) {
+        return value.left.humanString();
+    }
+    return format("(%s, %s)", value.left.humanString(), value.right.humanString());
+}
+
+string humanString(in Bound value) {
+    with (value) {
+        if (inf) {
+            return sign ? "-Inf" : "Inf";
+        } else {
+            writeln(fraction, " ",exponent, " ", fsizemax, " ", esizemax);
+            return floatString(sign, fraction, exponent, fsizemax, esizemax);
+        }
+    }
+}
+
+string floatString(bool sign, ulong fraction, ushort exponent, int fsizemax, int esizemax) {
+    with(mpfr_rnd_t) {
+        enum precision = 128;
 
         auto ratio = Mpfr(precision);
         mpfr_ui_pow_ui(ratio, 2, fsizemax, MPFR_RNDN);
@@ -555,10 +591,10 @@ string humanString(U)(in U value) if (IsUnum!U) {
         auto frac = Mpfr(precision);
         mpfr_set_ui(frac, fraction, MPFR_RNDN);
         mpfr_div(frac, frac, ratio, MPFR_RNDN);
-        mpfr_add_ui(frac, frac, hidden, MPFR_RNDN);
+        if(exponent) mpfr_add_ui(frac, frac, 1, MPFR_RNDN);
 
         auto magnitude = Mpfr(precision);
-        mpfr_set_si(magnitude, expo_value, MPFR_RNDN);
+        mpfr_set_si(magnitude, expoValue(esizemax, exponent), MPFR_RNDN);
         mpfr_ui_pow(magnitude, 2, magnitude, MPFR_RNDN);
 
         auto result = Mpfr(precision);
@@ -569,7 +605,7 @@ string humanString(U)(in U value) if (IsUnum!U) {
     }
 }
 
-string floatString(ref Mpfr value) {
+string floatString(ref const Mpfr value) {
     char[1024] buf;
     auto count = mpfr_snprintf(buf.ptr, buf.sizeof, "%Rg".ptr, &value);
     return buf[0..count].idup;
@@ -584,8 +620,76 @@ auto allvalues(U)() if (IsUnum!U) {
     return cartesianProduct(signs, iota(U.exponent_max + 1), iota(U.fraction_max + 1), ubits)
         .map!( t => build!U(t[0],t[1],t[2],t[3]) );
 }
-            
+
+struct Bound {
+    enum fsizemax = fraction.sizeof * 8; // 64 bits
+    enum esizemax = exponent.sizeof * 8; // 16 bits
+    bool sign;
+    ulong fraction;
+    ushort exponent;
+    bool open;
+    bool inf;
+    
+    pure @nogc nothrow static Bound infinity(bool sign) {
+        return Bound(sign, 0, 0, false, true);
+    }
+    
+    pure @nogc nothrow static Bound from(U)(in U value, bool open) if (IsUnum!U) {
+        assert(!isNaN(value));
+        assert(isExact(value));
+        assert(fsizemax >= U.fsizemax);
+        assert(esizemax >= U.esizemax);
+        auto f_ratio = fsizemax / U.fsizemax;
+        auto e_ratio = esizemax / U.esizemax;
+        with(value) {
+            if(isFinite(value)) {
+                assert(exponent * e_ratio <= ushort.max);
+                return Bound(sign, fraction * f_ratio, cast(ushort)(exponent * e_ratio), open, false);
+            } else {
+                return Bound(sign, 0, 0, open, true);
+            }
+        }
+    }
+}
+
+struct GBound {
+    alias fsizemax = Bound.fsizemax;
+    alias esizemax = Bound.esizemax;
+
+    bool nan;
+    Bound left;
+    Bound right;
+    
+    pure @nogc nothrow static GBound from(U)(in U value) if (IsUnum!U) {
+        if (isNaN(value)) return GBound(true);
+        if (isExact(value)) {
+            auto bound = Bound.from(value, false);
+            return GBound(false, bound, bound);
+        }
+        if (value is posopeninfu!U) {
+            return GBound(false, Bound.from(value.previous, true), Bound.infinity(false));
+        }
+        if (value is negopeninfu!U) {
+            return GBound(false, Bound.infinity(true), Bound.from(value.next, true));
+        }
+        if (value.sign) {
+            return GBound(false, Bound.from(value.next, true), Bound.from(value.previous, true));
+        } else {
+            return GBound(false, Bound.from(value.previous, true), Bound.from(value.next, true));
+        }
+    }
+}
+
 void main() {
+    import std.meta;
+
+    foreach(U; AliasSeq!(Unum!(0, 0), Unum!(1, 1), Unum!(3, 4), Fnum)) {
+        writeln(typeid(U), " ", U.esizemax, " ", U.fsizemax);
+    }
+
     import std.algorithm.iteration : map;
-    writefln("%-(%s\n%)", allvalues!(Unum!(1, 1)).map!humanString);
+    alias U = Unum!(0, 0);
+    foreach(value ; allvalues!U) {
+        writefln("% 30s : %s", value.humanString, GBound.from(value).humanString);
+    }
 }
