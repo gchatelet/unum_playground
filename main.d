@@ -534,16 +534,13 @@ nothrow @nogc @property
 }
 
 string humanString(U)(in U value) if (IsUnum!U) {
-    if(isNaN(value) || isExact(value)) return value.exactFloatString;
-    return value.sign ?
-        format("(%s, %s)", value.next.exactFloatString, value.previous.exactFloatString):
-        format("(%s, %s)", value.previous.exactFloatString, value.next.exactFloatString);
-}
-
-string exactFloatString(U)(in U value) if (IsUnum!U) {
     if(isNaN(value)) return value.sign ? "sNaN" : "qNaN";
     if(isInfinity(value)) return value.sign ? "-Inf" : "Inf";
-    assert(isExact(value));
+    if(!isExact(value)) {
+        string a = value.previous.humanString();
+        string b = value.next.humanString();
+        return format("(%s, %s)", value.sign ? b : a, value.sign ? a : b);
+    }
     with(value) with(mpfr_rnd_t) {
         enum precision = 128;
 
