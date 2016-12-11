@@ -532,6 +532,63 @@ nothrow @nogc @property
         }
     }
 }
+
+string humanString(U)(in U value) if (IsUnum!U) {
+    if(isNaN(value) || isExact(value)) return value.exactFloatString;
+    return value.sign ?
+        format("(%s, %s)", value.next.exactFloatString, value.previous.exactFloatString):
+        format("(%s, %s)", value.previous.exactFloatString, value.next.exactFloatString);
+}
+
+string exactFloatString(U)(in U value) if (IsUnum!U) {
+    if(isNaN(value)) return value.sign ? "sNaN" : "qNaN";
+    if(isInfinity(value)) return value.sign ? "-Inf" : "Inf";
+    assert(isExact(value));
+    with(value) with(mpfr_rnd_t) {
+        enum precision = 128;
+
+        immutable int hidden = exponent > 0 ? 1 : 0;
+        immutable uint esizemaxminus1 = esizemax - 1;
+        immutable long bias = 2L^^esizemaxminus1 - 1;
+        immutable long expo_value = exponent - bias + 1 - hidden;
+
+        auto ratio = Mpfr(precision);
+        mpfr_ui_pow_ui(ratio, 2, fsizemax, MPFR_RNDN);
+
+        auto frac = Mpfr(precision);
+        mpfr_set_ui(frac, fraction, MPFR_RNDN);
+        mpfr_div(frac, frac, ratio, MPFR_RNDN);
+        mpfr_add_ui(frac, frac, hidden, MPFR_RNDN);
+
+        auto magnitude = Mpfr(precision);
+        mpfr_set_si(magnitude, expo_value, MPFR_RNDN);
+        mpfr_ui_pow(magnitude, 2, magnitude, MPFR_RNDN);
+
+        auto result = Mpfr(precision);
+        mpfr_mul(result, magnitude, frac, MPFR_RNDN);
+        if (sign) mpfr_neg(result, result, MPFR_RNDN);
+
+        return floatString(result);
+    }
+}
+
+string floatString(ref Mpfr value) {
+    char[1024] buf;
+    auto count = mpfr_snprintf(buf.ptr, buf.sizeof, "%Rg".ptr, &value);
+    return buf[0..count].idup;
+}
+
+auto allvalues(U)() if (IsUnum!U) {
+    import std.algorithm.setops : cartesianProduct;
+    import std.algorithm.iteration : map;
+    import std.range : iota;
+    immutable signs = [false, true];
+    immutable ubits = [false, true];
+    return cartesianProduct(signs, iota(U.exponent_max + 1), iota(U.fraction_max + 1), ubits)
+        .map!( t => build!U(t[0],t[1],t[2],t[3]) );
+}
             
 void main() {
+    import std.algorithm.iteration : map;
+    writefln("%-(%s\n%)", allvalues!(Unum!(1, 1)).map!humanString);
 }
