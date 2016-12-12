@@ -459,12 +459,12 @@ nothrow @nogc @property
             assert(!value.isSignalingNaN);
         }
     }
-    
+
     auto minrealu(U)() if (IsUnum!U)
     {
         return build!U(true, U.exponent_max, U.fraction_max - 1, false);
     }
-    
+
     unittest
     {
         foreach (U; UnumTypes)
@@ -480,12 +480,12 @@ nothrow @nogc @property
             assert(!value.isSignalingNaN);
         }
     }
-    
+
     auto smallsubnormalu(U)() if (IsUnum!U)
     {
         return build!U(false, 0, 1, false);
     }
-    
+
     unittest
     {
         foreach (U; UnumTypes)
@@ -501,7 +501,7 @@ nothrow @nogc @property
             assert(!value.isSignalingNaN);
         }
     }
-    
+
     auto next(U)(in U value) if (IsUnum!U) {
         with(value) {
             if(!ubit) return build!U(sign, exponent, fraction, true);
@@ -521,7 +521,7 @@ nothrow @nogc @property
             return build!U(true, U.exponent_max, U.fraction_max, true);
         }
     }
-    
+
     unittest
     {
         foreach (U; UnumTypes)
@@ -629,11 +629,11 @@ struct Bound {
     ushort exponent;
     bool open;
     bool inf;
-    
+
     pure @nogc nothrow static Bound infinity(bool sign) {
         return Bound(sign, 0, 0, false, true);
     }
-    
+
     pure @nogc nothrow static Bound from(U)(in U value, bool open) if (IsUnum!U) {
         assert(!isNaN(value));
         assert(isExact(value));
@@ -659,7 +659,7 @@ struct GBound {
     bool nan;
     Bound left;
     Bound right;
-    
+
     pure @nogc nothrow static GBound from(U)(in U value) if (IsUnum!U) {
         if (isNaN(value)) return GBound(true);
         if (isExact(value)) {
