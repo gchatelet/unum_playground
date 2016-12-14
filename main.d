@@ -549,36 +549,44 @@ int expoValue(uint esizemax, ushort exponent) {
     return exponent ? exponent - bias : exponent - bias + 1;
 }
 
-string humanString(U)(in U value) if (IsUnum!U) {
+string humanString(alias display = floatString, U)(in U value) if (IsUnum!U) {
     if(isNaN(value)) return value.sign ? "sNaN" : "qNaN";
     if(isInfinity(value)) return value.sign ? "-Inf" : "Inf";
     if(!isExact(value)) {
-        string a = value.previous.humanString();
-        string b = value.next.humanString();
+        string a = humanString!(display, U)(value.previous);
+        string b = humanString!(display, U)(value.next);
         return format("(%s, %s)", value.sign ? b : a, value.sign ? a : b);
     }
     with(value) {
-        return floatString(sign, fraction, exponent, fsizemax, esizemax);
+        return display(sign, fraction, exponent, fsizemax, esizemax);
     }
 }
 
-string humanString(in GBound value) {
+string humanString(alias display = floatString)(in GBound value) {
     if (value.nan) return "nan";
-    if (value.left is value.right) {
-        return value.left.humanString();
+    if (value.left == value.right) {
+        return humanString!display(value.left);
     }
-    return format("(%s, %s)", value.left.humanString(), value.right.humanString());
+    return format("(%s, %s)", humanString!display(value.left), humanString!display(value.right));
 }
 
-string humanString(in Bound value) {
+string humanString(alias display = floatString)(in Bound value) {
     with (value) {
         if (inf) {
             return sign ? "-Inf" : "Inf";
         } else {
-            writeln(fraction, " ",exponent, " ", fsizemax, " ", esizemax);
-            return floatString(sign, fraction, exponent, fsizemax, esizemax);
+            return display(sign, fraction, exponent, fsizemax, esizemax);
         }
     }
+}
+
+string debugString(bool sign, ulong fraction, ushort exponent, int fsizemax, int esizemax) {
+    string hidden = exponent > 0 ? "1+" : "";
+    string prefix = sign ? "-" : "";
+    import std.bigint;
+    BigInt a = "2";
+    auto b = a ^^ fsizemax;
+    return format("%s2^%dx(%s%d/%s) (%d %d %d %d)", prefix, expoValue(esizemax, exponent), hidden, fraction, b.toDecimalString ,fraction, exponent, fsizemax, esizemax);
 }
 
 string floatString(bool sign, ulong fraction, ushort exponent, int fsizemax, int esizemax) {
@@ -687,9 +695,9 @@ void main() {
         writeln(typeid(U), " ", U.esizemax, " ", U.fsizemax);
     }
 
-    import std.algorithm.iteration : map;
-    alias U = Unum!(0, 0);
-    foreach(value ; allvalues!U) {
-        writefln("% 30s : %s", value.humanString, GBound.from(value).humanString);
+    import std.algorithm.iteration : map, filter;
+    alias U = Unum!(1, 1);
+    foreach(value ; allvalues!U.filter!(x => isExact(x))) {
+        writefln("%30s : %s", value.humanString!debugString, GBound.from(value).humanString!debugString);
     }
 }
