@@ -543,10 +543,46 @@ int expoValue(U)(in U value) if (IsUnum!U) in {
     }
 }
 
-int expoValue(uint esizemax, ushort exponent) {
+pure @nogc nothrow int unbias(uint esizemax, ushort biased_exponent) {
+    assert(esizemax > 0);
+    assert(esizemax <= 16);
+    assert(2^^esizemax > biased_exponent);
+    immutable uint esizemaxminus1 = esizemax - 1;
+    immutable uint bias = 2^^esizemaxminus1 - 1;
+    return biased_exponent ?
+        biased_exponent - bias :
+        biased_exponent - bias + 1;
+}
+
+unittest {
+    assert(unbias(1, 0) == 1);
+    assert(unbias(1, 1) == 1);
+    assert(unbias(8, 0) == -126);
+    assert(unbias(8, 1) == -126);
+    assert(unbias(8, 2) == -125);
+    assert(unbias(8, 255) == 128);
+    assert(unbias(16, 0) == -32766);
+    assert(unbias(16, 1) == -32766);
+    assert(unbias(16, 2) == -32765);
+    assert(unbias(16, 65535) == 32768);
+}
+
+pure @nogc nothrow uint bias(uint esizemax, int exponent) {
+    assert(esizemax > 0);
+    assert(esizemax <= 16);
     immutable uint esizemaxminus1 = esizemax - 1;
     immutable int bias = 2^^esizemaxminus1 - 1;
-    return exponent ? exponent - bias : exponent - bias + 1;
+    return exponent + bias;
+}
+
+unittest {
+    assert(bias(1, 1) == 1);
+    assert(bias(8, -126) == 1);
+    assert(bias(8, -125) == 2);
+    assert(bias(8, 128) == 255);
+    assert(bias(16, -32766) == 1);
+    assert(bias(16, -32765) == 2);
+    assert(bias(16, 32768) == 65535);
 }
 
 string humanString(alias display = floatString, U)(in U value) if (IsUnum!U) {
@@ -586,7 +622,10 @@ string debugString(bool sign, ulong fraction, ushort exponent, int fsizemax, int
     import std.bigint;
     BigInt a = "2";
     auto b = a ^^ fsizemax;
-    return format("%s2^%dx(%s%d/%s) (%d %d %d %d)", prefix, expoValue(esizemax, exponent), hidden, fraction, b.toDecimalString ,fraction, exponent, fsizemax, esizemax);
+    return format("%s2^%dx(%s%d/%s) (%d %d %d %d) (%s)",
+        prefix, unbias(esizemax, exponent), hidden, fraction, b.toDecimalString,
+        fraction, exponent, fsizemax, esizemax,
+        floatString(sign, fraction, exponent, fsizemax, esizemax));
 }
 
 string floatString(bool sign, ulong fraction, ushort exponent, int fsizemax, int esizemax) {
@@ -602,7 +641,7 @@ string floatString(bool sign, ulong fraction, ushort exponent, int fsizemax, int
         if(exponent) mpfr_add_ui(frac, frac, 1, MPFR_RNDN);
 
         auto magnitude = Mpfr(precision);
-        mpfr_set_si(magnitude, expoValue(esizemax, exponent), MPFR_RNDN);
+        mpfr_set_si(magnitude, unbias(esizemax, exponent), MPFR_RNDN);
         mpfr_ui_pow(magnitude, 2, magnitude, MPFR_RNDN);
 
         auto result = Mpfr(precision);
@@ -647,12 +686,18 @@ struct Bound {
         assert(isExact(value));
         assert(fsizemax >= U.fsizemax);
         assert(esizemax >= U.esizemax);
-        auto f_ratio = fsizemax / U.fsizemax;
-        auto e_ratio = esizemax / U.esizemax;
+        auto f_ratio = 2^^(Bound.fsizemax - U.fsizemax);
         with(value) {
             if(isFinite(value)) {
-                assert(exponent * e_ratio <= ushort.max);
-                return Bound(sign, fraction * f_ratio, cast(ushort)(exponent * e_ratio), open, false);
+                const unbiased = unbias(U.esizemax, exponent);
+                auto biased = bias(Bound.esizemax, unbiased);
+                assert(biased < ushort.max);
+                assert(biased > 0);
+//                 if(exponent == 0) {
+//                     //assert(biased == 1);
+//                     biased = 0;
+//                 }
+                return Bound(sign, fraction * f_ratio, cast(ushort)(biased), open, false);
             } else {
                 return Bound(sign, 0, 0, open, true);
             }
