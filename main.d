@@ -741,8 +741,33 @@ void main() {
     }
 
     import std.algorithm.iteration : map, filter;
-    alias U = Unum!(1, 1);
-    foreach(value ; allvalues!U.filter!(x => isExact(x))) {
-        writefln("%30s : %s", value.humanString!debugString, GBound.from(value).humanString!debugString);
+    foreach(U; AliasSeq!(Unum!(0, 1), Unum!(1, 0), Unum!(1, 1), Unum!(2, 0), Unum!(2, 1))) {
+        foreach(value ; allvalues!U.filter!(x => isExact(x))) {
+            writefln("%30s : %s", value.humanString!debugString, GBound.from(value).humanString!debugString);
+        }
+        writeln("--------------");
     }
 }
+
+//               f e f e
+// 2^1x(1/4)    (1 0 2 1) (0.5)
+// 2^0x(1/2)    (1 0 1 2) (0.5)
+// 2^0x(2/4)    (2 0 2 2) (0.5)
+// 2^-1x(1+0/2) (0 6 1 4) (0.5)
+// 2^-1x(1+0/4) (0 6 2 4) (0.5)
+
+//    2^0x(3/4) (3 0 2 2) (0.75)
+// 2^-1x(1+1/2) (1 6 1 4) (0.75)
+// 2^-1x(1+2/4) (2 6 2 4) (0.75)
+
+//   2^1x(2/4)  (2 0 2 1) (1)
+//  2^0x(1+0/2) (0 1 1 2) (1)
+//  2^0x(1+0/4) (0 1 2 2) (1)
+//  2^0x(1+0/2) (0 7 1 4) (1)
+//  2^0x(1+0/4) (0 7 2 4) (1)
+
+//    2^1x(3/4) (3 0 2 1) (1.5)
+//  2^0x(1+1/2) (1 1 1 2) (1.5)
+//  2^0x(1+2/4) (2 1 2 2) (1.5)
+//  2^0x(1+1/2) (1 7 1 4) (1.5)
+//  2^0x(1+2/4) (2 7 2 4) (1.5)
