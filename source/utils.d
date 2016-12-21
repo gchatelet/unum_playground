@@ -430,7 +430,7 @@ string toMathString(U)(in U value) if (IsUnum!U) {
             sign ? "-" : "",
             unbias(U.esizemax, exponent),
             fraction,
-            2^^fraction_max,
+            fraction_max,
             exponent > 0 ? "+1" : "",
             ubit ? "..." : "");
 }
@@ -459,23 +459,6 @@ unittest {
     assert(scale(-4) == 2);
     assert(scale(-2) == 1);
     assert(scale(-1) == 0);
-}
-
-// Finds the best number of exponent bits, accounting for subnormal.
-pure nothrow @nogc int ne(real x) {
-    if(x == 0 || scale(x) == 1) return 1;
-    return cast(uint)(ceil(log2(1 + abs(scale(x) - 1))) + 1);
-}
-
-unittest {
-    import std.stdio;
-    assert(ne(-2) == 1);
-    assert(ne(-1) == 2);
-    assert(ne(-0) == 1);
-    assert(ne(0)  == 1);
-    assert(ne(-1) == 2);
-    assert(ne(2)  == 1);
-    assert(ne(10)  == 3);
 }
 
 // Conversion of a floatable real to a unum. Most of the complexity stems from

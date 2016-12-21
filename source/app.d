@@ -6,8 +6,8 @@ import pegged.grammar;
 /// Numbers
 mixin(grammar(`
 Numbers:
+    Special    <~ "nan" / ( Sign? "inf" ) / Scientific
     Scientific <~ Floating ( ('e' / 'E' ) Integer )? ('...')?
-    Special    <~ 'nan' / (Sign? 'inf')
     Floating   <~ Integer ('.' Unsigned )?
     Unsigned   <~ [0-9]+
     Integer    <~ Sign? Unsigned
@@ -15,17 +15,17 @@ Numbers:
     Sign       <- '-' / '+'
 `));
 
-alias U = Unum!(3, 5);
+alias U = Unum!(3, 4);
 
 void interpret(string line) {
     auto value = Numbers(line);
     if(value.matches != [line]) {
-        writefln(`Error parsing '%s'`, line);
+        writefln(`Error parsing '%s'`, value.matches);
         return;
     }
     import std.conv : to;
     const real_value = to!real(line);
-    writeln(x2u!U(real_value ).toHumanString);
+    writeln(x2u!U(real_value ).toDebugString);
 }
 
 version(unittest) {} else
