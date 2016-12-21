@@ -69,14 +69,16 @@ struct Unum(int e, int f) {
 
     union {
         struct {
-            mixin(bitfields!(bool, "ubit", 1, //
-                    ulong, "fraction", fsizemax, //
-                    ushort, "exponent", esizemax, //
-                    bool, "sign", 1, //
-                    ulong, "unused", storage_lost_bits));
+            mixin(bitfields!(
+                bool, "ubit", 1,
+                ulong, "fraction", fsizemax,
+                ushort, "exponent", esizemax,
+                bool, "sign", 1,
+                ulong, "unused", storage_lost_bits));
         }
         struct {
-            mixin(bitfields!(ulong, "raw", hardware_bits));
+            mixin(bitfields!(
+                ulong, "raw", hardware_bits));
         }
     }
 
@@ -90,7 +92,7 @@ struct Unum(int e, int f) {
 version (unittest)
 {
     import std.meta;
-    import std.stdio : writeln;
+    import std.stdio : writeln, writefln;
 
     alias UnumTypes = AliasSeq!(Unum!(0, 0), Unum!(1, 1), Unum!(2, 3), Unum!(3, 4), Fnum);
 }
@@ -136,7 +138,7 @@ template negopenzerou(U)    { enum negopenzerou =    build!U(true,  0, 0, true);
 template maxrealu(U)        { enum maxrealu =        build!U(false, U.exponent_max, U.fraction_max - 1, false); }
 template minrealu(U)        { enum minrealu =        build!U(true,  U.exponent_max, U.fraction_max - 1, false); }
 template smallsubnormalu(U) { enum smallsubnormalu = build!U(false, 0, 1, false); }
-template smallnormalu(U)    { enum smallnormalu    = build!U(false, 0, U.fraction_max - 1, false); }
+template smallnormalu(U)    { enum smallnormalu    = build!U(false, 1, 0, false); }
 
 bool isExact(U)(in U value)        if (IsUnum!U) { return !value.ubit; }
 bool isNotFinite(U)(in U value)    if (IsUnum!U) { return value.fraction == U.fraction_max && value.exponent == U.exponent_max; }
@@ -338,9 +340,14 @@ auto allValues(U)() if (IsUnum!U) {
         .map!( t => build!U(t[0],t[1],t[2],t[3]) );
 }
 
+auto allFinite(U)() if (IsUnum!U) {
+    import std.algorithm.iteration : filter;
+    return allValues!U.filter!(x => isFinite(x));
+}
+
 auto allFiniteExact(U)() if (IsUnum!U) {
     import std.algorithm.iteration : filter;
-    return allValues!U.filter!(x => isFinite(x) && isExact(x));
+    return allFinite!U.filter!(x => isExact(x));
 }
 
 pure @nogc nothrow int unbias(uint esizemax, ushort biased_exponent) {
@@ -365,6 +372,24 @@ unittest {
     assert(unbias(16, 1) == -32766);
     assert(unbias(16, 2) == -32765);
     assert(unbias(16, 65535) == 32768);
+}
+
+pure @nogc nothrow uint bias(uint esizemax, int exponent) {
+    assert(esizemax > 0);
+    assert(esizemax <= 16);
+    immutable uint esizemaxminus1 = esizemax - 1;
+    immutable int bias = 2^^esizemaxminus1 - 1;
+    return exponent + bias;
+}
+
+unittest {
+    assert(bias(1, 1) == 1);
+    assert(bias(8, -126) == 1);
+    assert(bias(8, -125) == 2);
+    assert(bias(8, 128) == 255);
+    assert(bias(16, -32766) == 1);
+    assert(bias(16, -32765) == 2);
+    assert(bias(16, 32768) == 65535);
 }
 
 pure @nogc real toReal(U)(in U value) if (IsUnum!U) {
@@ -401,18 +426,18 @@ string toBinString(U)(in U value) if (IsUnum!U) {
 
 string toMathString(U)(in U value) if (IsUnum!U) {
     import std.format;
-    with(value) return format("%s2^%d%sx%d/%d%s",
+    with(value) return format("%s2^%dx(%d/%d%s)%s",
             sign ? "-" : "",
-            exponent,
-            exponent > 0 ? "+1" : "",
+            unbias(U.esizemax, exponent),
             fraction,
-            fraction_max,
+            2^^fraction_max,
+            exponent > 0 ? "+1" : "",
             ubit ? "..." : "");
 }
 
 string toDebugString(U)(in U value) if (IsUnum!U) {
     import std.format;
-    return format("%s | %s | %s",
+    return format("%s | %20s | %s",
         toBinString(value),
         toMathString(value),
         toHumanString(value)
@@ -464,23 +489,21 @@ U x2u(U)(real x) if (IsUnum!U) {
     if (abs(x) > maxrealu!U.toReal)
         return signbit(x) ? negopeninfu!U : posopeninfu!U;
     if (x == 0)
-        return poszerou!U;
+        return signbit(x) ? negzerou!U : poszerou!U;
     if (abs(x) < smallsubnormalu!U.toReal)
         return signbit(x) ? negopenzerou!U : posopenzerou!U;
     immutable smallnormal = smallnormalu!U.toReal;
-    immutable smallsubnormal = smallsubnormalu!U.toReal;
-    writeln("smallnormal: ", smallnormal);
-    writeln("smallsubnormal: ", smallsubnormal);
     if (abs(x) < smallnormal) {
-        // subnormal number
-        auto y = abs(x) / smallsubnormal;
-        auto y_floor = cast(ulong)floor(y);
-        auto output = build!U(x < 0, 0, y_floor, y_floor != y);
-        writeln("y: ", y);
-        return output;
+        immutable smallsubnormal = smallsubnormalu!U.toReal;
+        auto fraction = abs(x) / smallsubnormal;
+        auto fraction_floor = floor(fraction);
+        return build!U(x < 0, 0, cast(ulong)fraction_floor, fraction_floor != fraction);
     } else {
-        // normal number
-        return U();
+        auto scaled = abs(x) / 2.^^scale(x);
+        const uint biased_exponent = bias(U.esizemax, scale(x));
+        const fraction = 2.^^U.fsizemax * (scaled - 1);
+        auto fraction_floor = floor(fraction);
+        return build!U(x < 0, biased_exponent, cast(ulong)fraction_floor, fraction_floor != fraction);
     }
 }
 
@@ -503,8 +526,20 @@ unittest {
     assert(x2u!Walpiri(real.infinity) == posinfu!Walpiri);
     assert(x2u!Walpiri(-real.infinity) == neginfu!Walpiri);
 
-    alias Small = Unum!(0, 2);
-    // Subnormal
-    foreach(x ; allFiniteExact!Small) writeln(toReal(x));
-    writeln(x2u!Small(2).toDebugString);
+    foreach(U ; AliasSeq!(Unum!(0, 0), Unum!(0, 1), Unum!(1, 0), Unum!(1, 1), Unum!(2, 2))) {
+        foreach(x ; allFinite!U) {
+            if (isNotFinite(x)) continue;
+            real floatable;
+            if (isExact(x)) {
+                floatable = toReal(x);
+            } else if (x == posopeninfu!U ) {
+                floatable = toReal(maxrealu!U) + 1;
+            } else if (x == negopeninfu!U ) {
+                floatable = toReal(minrealu!U) - 1;
+            } else {
+                floatable = (toReal(x.previous) + toReal(x.next)) / 2;
+            }
+            assert(x2u!U(floatable) == x);
+        }
+    }
 }
