@@ -6,7 +6,7 @@ import pegged.grammar;
 /// Numbers
 mixin(grammar(`
 Numbers:
-    Special    <~ "nan" / ( Sign? "inf" ) / Scientific
+    Number    <~ "nan" / ( Sign? "inf" ) / Scientific
     Scientific <~ Floating ( ('e' / 'E' ) Integer )? ('...')?
     Floating   <~ Integer ('.' Unsigned )?
     Unsigned   <~ [0-9]+

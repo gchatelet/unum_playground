@@ -1,6 +1,7 @@
 module unum;
 
 import std.math;
+import mpfrd;
 
 // Returns the number of hardware bits to use to store v bits.
 pure nothrow @nogc uint hardwareBits(uint v) {
@@ -406,6 +407,21 @@ pure @nogc real toReal(U)(in U value) if (IsUnum!U) {
     }
 }
 
+Mpfr toMpfr(U)(in U value) if (IsUnum!U) {
+    import deimos.mpfr : mpfr_rnd_t, mpfr_neg;
+    assert(isExact(value));
+    assert(isFinite(value));
+    with(value) {
+        enum precision = 128; // TODO: Pick a better precision
+        const two = Mpfr(2, precision);
+        auto frac = Mpfr(fraction, precision) * (two^^-fsizemax);
+        if (exponent) frac += 1;
+        auto magnitude = two ^^ unbias(esizemax, exponent);
+        if (sign) mpfr_neg(magnitude, magnitude, mpfr_rnd_t.MPFR_RNDN);
+        return magnitude * frac;
+    }
+}
+
 string toHumanString(U)(in U value) if (IsUnum!U) {
     if(isNaN(value)) return value.sign ? "sNaN" : "qNaN";
     if(isInfinity(value)) return value.sign ? "-Inf" : "Inf";
@@ -415,7 +431,7 @@ string toHumanString(U)(in U value) if (IsUnum!U) {
         string b = toHumanString(value.next);
         return format("(%s, %s)", value.sign ? b : a, value.sign ? a : b);
     }
-    return format("%g", toReal(value));
+    return toMpfr(value).toString;
 }
 
 
