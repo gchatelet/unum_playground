@@ -7,14 +7,26 @@ struct Mpfr {
     mpfr_t mpfr;
     alias mpfr this;
 
-    @disable this(this);
+    @disable this();
 
-    this(int precision) {
+    this(this) {
+        mpfr_t new_mpfr;
+        mpfr_init2(new_mpfr, mpfr_get_prec(mpfr));
+        mpfr_set(new_mpfr, mpfr, mpfr_rnd_t.MPFR_RNDN);
+        mpfr = new_mpfr;
+    }
+
+    this(T)(const T value, mpfr_prec_t precision = 32) if(isNumeric!T) {
         mpfr_init2(mpfr, precision);
+        this = value;
     }
 
     ~this() {
         mpfr_clear(mpfr);
+    }
+
+    private static template isNumericValue(T) {
+        enum isNumericValue = isNumeric!T || is(T == Mpfr);
     }
 
     private static string getTypeString(T)() {
@@ -31,37 +43,26 @@ struct Mpfr {
         }
     }
 
-    // Assign
+    ////////////////////////////////////////////////////////////////////////////
+    // Comparisons
+    ////////////////////////////////////////////////////////////////////////////
 
-    ref Mpfr opAssign(T)(T value) if(isNumeric!T) {
-        mixin("mpfr_set" ~ getTypeString!T() ~ "(mpfr, value, mpfr_rnd_t.MPFR_RNDN);");
-        return this;
-    }
-    
-    ref Mpfr opAssign(ref const Mpfr value) {
-        mpfr_set(mpfr, value, mpfr_rnd_t.MPFR_RNDN);
-        return this;
-    }
-    
-    // Compare and equals
-
-    int opCmp(T)(T value) const if(isNumeric!T) {
+    int opCmp(T)(const T value) const if(isNumericValue!T) {
         mixin("return mpfr_cmp" ~ getTypeString!T() ~ "(mpfr, value);");
     }
-    
+
     int opCmp(ref const Mpfr value) {
-        return mpfr_cmp(mpfr, value);
+        return this is value || mpfr_cmp(mpfr, value);
     }
 
-    bool opEquals(T)(T value) const if(isNumeric!T) {
+    bool opEquals(T)(const T value) const if(isNumericValue!T) {
         return opCmp(value) == 0;
     }
-    
+
     bool opEquals(ref const Mpfr value) {
-        return opCmp(value) == 0;
+        return this is value || opCmp(value) == 0;
     }
-    
-    // Arithmetic
+
     private static string getOperatorString(string op)() {
         final switch(op) {
             case "+": return "_add";
@@ -72,15 +73,99 @@ struct Mpfr {
         }
     }
 
-    ref Mpfr opOpAssign(string op, T)(T value) if(isNumeric!T) {
-        static assert(!(op == "^^" && isFloatingPoint!T), "no operator ^^= with floating point.");
-        mixin("mpfr" ~ getOperatorString!op() ~ getTypeString!T() ~ "(mpfr, mpfr, value, mpfr_rnd_t.MPFR_RNDN);");
+    private static string getShiftOperatorString(string op)() {
+        final switch(op) {
+            case "<<": return "_mul";
+            case ">>": return "_div";
+        }
+    }
+
+    private static string getShiftTypeString(T)() {
+        static if (isIntegral!T && isSigned!T) {
+            return "_2si";
+        } else static if (isIntegral!T && !isSigned!T) {
+            return "_2ui";
+        } else {
+            static assert(false, "Unhandled type " ~ T.stringof);
+        }
+    }
+
+    private static string getFunctionSuffix(string op, T, bool isRight) () {
+        static if(op == "<<" || op == ">>") {
+            static assert(!isRight, "Binary Right Shift not allowed, try using lower level mpfr_ui_pow.");
+            return getShiftOperatorString!op() ~ getShiftTypeString!T();
+        } else {
+            return isRight ?
+                getTypeString!T() ~ getOperatorString!op():
+                getOperatorString!op() ~ getTypeString!T();
+        }
+    }
+
+    private static string getFunction(string op, T, bool isRight) () {
+        return "mpfr" ~ getFunctionSuffix!(op, T, isRight);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Arithmetic
+    ////////////////////////////////////////////////////////////////////////////
+
+    Mpfr opBinary(string op, T)(const T value) const if(isNumericValue!T) {
+        auto output = Mpfr(0);
+        mixin(getFunction!(op, T, false)() ~ "(output, mpfr, value, mpfr_rnd_t.MPFR_RNDN);");
+        return output;
+    }
+
+    Mpfr opBinaryRight(string op, T)(const T value) const if(isNumericValue!T) {
+        static if(op == "-" || op == "/" || op == "<<" || op == ">>") {
+            auto output = Mpfr(0);
+            mixin(getFunction!(op, T, true)() ~ "(output, value, mpfr, mpfr_rnd_t.MPFR_RNDN);");
+            return output;
+        } else {
+            return opBinary!op(value);
+        }
+    }
+
+    Mpfr opUnary(string op)() const if(op == "-") {
+        auto output = Mpfr(0);
+        mpfr_neg(output, mpfr, mpfr_rnd_t.MPFR_RNDN);
+        return output;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Mutation
+    ////////////////////////////////////////////////////////////////////////////
+
+    ref Mpfr opAssign(T)(const T value) if(isNumericValue!T) {
+        mixin("mpfr_set" ~ getTypeString!T() ~ "(mpfr, value, mpfr_rnd_t.MPFR_RNDN);");
+        return this;
+    }
+
+    ref Mpfr opAssign(ref const Mpfr value) {
+        mpfr_set(mpfr, value, mpfr_rnd_t.MPFR_RNDN);
+        return this;
+    }
+
+    ref Mpfr opOpAssign(string op, T)(const T value) if(isNumericValue!T) {
+        static assert(!(op == "^^" && isFloatingPoint!T), "No operator ^^= with floating point.");
+        mixin(getFunction!(op, T, false)() ~ "(mpfr, mpfr, value, mpfr_rnd_t.MPFR_RNDN);");
         return this;
     }
 
     ref Mpfr opOpAssign(string op)(ref const Mpfr value) {
-        mixin("mpfr" ~ getOperatorString!op() ~ "(mpfr, mpfr, value, mpfr_rnd_t.MPFR_RNDN);");
+        if(value !is this) {
+            mixin(getFunction!(op, T, false)() ~ "(mpfr, mpfr, value, mpfr_rnd_t.MPFR_RNDN);");
+        }
         return this;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // String
+    ////////////////////////////////////////////////////////////////////////////
+
+    string toString() const {
+        char[1024] buffer;
+        const count = mpfr_snprintf(buffer.ptr, buffer.sizeof, "%Rg".ptr, &mpfr);
+        return buffer[0 .. count].idup;
     }
 }
 
@@ -88,83 +173,121 @@ version (unittest)
 {
     import std.meta;
     import std.stdio : writeln, writefln;
+    alias AllNumericTypes = AliasSeq!(ubyte, ushort, uint, ulong, float, double, byte, short, int, long, Mpfr);
+    alias AllIntegralTypes = AliasSeq!(ubyte, ushort, uint, ulong, byte, short, int, long, Mpfr);
+    alias AllIntegralNoMpfr = AliasSeq!(ubyte, ushort, uint, ulong, byte, short, int, long);
 }
 
 unittest {
-    auto value = Mpfr(8);
-    foreach(T ; AliasSeq!(ubyte, ushort, uint, ulong, float, double, byte, short, int, long)) {
-        {
-            value = T(1);
-            assert(value == T(1));
-            assert(value <= T(1));
-            assert(value < T(2));
-            assert(value > T(0));
-            value *= T(2);
-            assert(value == T(2));
-            value /= T(2);
-            assert(value == T(1));
-            value += T(1);
-            assert(value == T(2));
-            value -= T(1);
-            assert(value == T(1));
-        }
-        static if (!isFloatingPoint!T) {
-            value = T(2);
-            value ^^= T(2);
-            assert(value == T(4));
-        }
-        static if (isSigned!T) {
-            value = T(-1);
-            assert(value == T(-1));
-            assert(value <= T(-1));
-            assert(value > T(-2));
-            assert(value < T(0));
-        }
+    // Assign from numeric type or another Mpfr
+    auto value = Mpfr(0);
+    value = 1;
+    foreach(T ; AllNumericTypes) {
+        value = T(1);
     }
-    {
-        value = -1;
-        auto tmp = Mpfr(32);
-        tmp = -1;
-        assert(value == tmp);
-        assert(value <= tmp);
-        tmp = -2;
-        assert(value > tmp);
-        tmp = 0;
-        assert(value < tmp);
-        //
+}
+
+unittest {
+    // Copy
+    auto a = Mpfr(0);
+    auto b = Mpfr(0);
+    a = 2;
+    b = a;
+    assert(b == 2);
+}
+
+unittest {
+    // Comparisons
+    auto value = Mpfr(0);
+    value = 2;
+    foreach(T ; AllNumericTypes) {
+        assert(value == T(2));
+        assert(value <= T(2));
+        assert(value <= T(3));
+        assert(value >= T(2));
+        assert(value >= T(1));
+    }
+}
+
+unittest {
+    // opOpAssign
+    auto value = Mpfr(1);
+    assert(value == 1);
+    value = value;
+    assert(value == 1);
+    foreach(T ; AllNumericTypes) {
         value = 2;
-        tmp = 2;
-        value *= tmp;
+        value += T(2);
         assert(value == 4);
-        //
+    }
+    foreach(T ; AllNumericTypes) {
         value = 2;
-        tmp = 2;
-        value /= tmp;
+        value -= T(2);
+        assert(value == 0);
+    }
+    foreach(T ; AllNumericTypes) {
+        value = 2;
+        value *= T(3);
+        assert(value == 6);
+    }
+    foreach(T ; AllNumericTypes) {
+        value = 2;
+        value /= T(2);
         assert(value == 1);
-        //
-        tmp = 1;
+    }
+    foreach(T ; AllIntegralTypes) {
         value = 2;
-        value += tmp;
-        assert(value == 3);
-        //
-        tmp = 1;
+        value ^^= T(2);
+        assert(value == 4);
+    }
+    foreach(T ; AllIntegralNoMpfr) {
         value = 2;
-        value -= tmp;
-        assert(value == 1);
-        //
-        tmp = 1;
-        value = 2;
-        value *= tmp;
+        value <<= 3;
+        assert(value == 16);
+    }
+    foreach(T ; AllIntegralNoMpfr) {
+        value = 16;
+        value >>= 3;
         assert(value == 2);
-        //
-        tmp = 2;
+    }
+}
+
+unittest {
+    // opBinary && opRightBinary
+    auto value = Mpfr(0);
+    foreach(T ; AllNumericTypes) {
         value = 2;
-        value /= tmp;
-        assert(value == 1);
-        //
-        tmp = 2;
+        assert(value + T(2) == 4);
+        assert(T(2) + value == 4);
+    }
+    foreach(T ; AllNumericTypes) {
+        value = 3;
+        assert(value - T(2) == 1);
         value = 2;
-        value ^^= tmp;
-        assert(value == 4);
+        assert(T(3) - value == 1);
+    }
+    foreach(T ; AllNumericTypes) {
+        value = 2;
+        assert(value * T(3) == 6);
+        assert(T(3) * value == 6);
+    }
+    foreach(T ; AllNumericTypes) {
+        value = 4;
+        assert(value / T(2) == 2);
+        value = 2;
+        assert(T(6) / value == 3);
+    }
+    foreach(T ; AllIntegralTypes) {
+        value = 2;
+        assert(value ^^ T(2) == 4);
+        assert(T(2) ^^ value == 4);
+    }
+    foreach(T ; AllIntegralNoMpfr) {
+        value = 2;
+        assert(value << T(3) == 16);
+    }
+    foreach(T ; AllIntegralNoMpfr) {
+        value = 16;
+        assert(value >> T(3) == 2);
     }
 }
