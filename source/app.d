@@ -1,6 +1,6 @@
 import std.stdio;
 
-import utils;
+import unum;
 import pegged.grammar;
 
 /// Numbers
@@ -28,12 +28,15 @@ void interpret(string line) {
     writeln(x2u!U(real_value ).toDebugString);
 }
 
-version(unittest) {} else
-void main(string[] args)
-{
-    import std.stdio : readln;
-    import std.string : strip;
-    for(;;) {
-        interpret(strip(readln()));
+version(unittest) {
+    void main(){}
+} else {
+    void main(string[] args)
+    {
+        import std.stdio : readln;
+        import std.string : strip;
+        for(;;) {
+            interpret(strip(readln()));
+        }
     }
 }
